@@ -1,8 +1,15 @@
 import { Client, Collection, Intents } from "discord.js";
 import dotenv from "dotenv";
-import fs from "fs";
 import { BotClient } from "./types/BotClient";
-import { BotCommand } from "./types/BotCommand";
+import {
+  AudioPlayer,
+  AudioPlayerStatus,
+  createAudioPlayer,
+  createAudioResource,
+  joinVoiceChannel,
+  VoiceConnection,
+} from "@discordjs/voice";
+import ytdl from "ytdl-core";
 
 dotenv.config();
 
@@ -14,29 +21,45 @@ export const client: BotClient = new Client({
   ],
 });
 
-client.commands = new Collection();
+client.once("ready", () => {
+  console.log("Ready!");
+});
 
-const commandFiles = fs
-  .readdirSync("./commands")
-  .filter((file) => file.endsWith(".ts"));
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (message.mentions.everyone || !message.mentions.has(client.user!)) return;
 
-for (const file of commandFiles) {
-  const command: BotCommand = require(`./commands/${file}`).default;
-  client.commands.set(command.data.name, command);
-}
+  const guild = client.guilds.cache.get(message.guildId!);
+  const member = guild?.members.cache.get(message.member?.id!);
+  const voiceChannel = member?.voice.channel;
 
-const eventFiles = fs
-  .readdirSync("./events")
-  .filter((file) => file.endsWith(".ts"));
+  if (voiceChannel) {
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+    });
+    const resource = createAudioResource(
+      ytdl(process.env.SONG_LINK!, {
+        quality: "highestaudio",
+        highWaterMark: 1 << 25,
+      })
+    );
+    const player = createAudioPlayer();
+    player.play(resource);
+    connection.subscribe(player);
+    console.log("Playing");
 
-for (const file of eventFiles) {
-  const event = require(`./events/${file}`).default;
+    player.on("error", (error) => {
+      console.error(error);
+    });
 
-  if (event.once) {
-    client.once(event.name, (...args) => event.execute(client, ...args));
+    player.on(AudioPlayerStatus.Idle, () => {
+      connection.destroy();
+    });
   } else {
-    client.on(event.name, (...args) => event.execute(client, ...args));
+    await message.reply("Must be in a voice channel");
   }
-}
+});
 
 client.login(process.env.TOKEN);
